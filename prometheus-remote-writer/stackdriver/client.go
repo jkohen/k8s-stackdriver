@@ -23,7 +23,6 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/common/model"
-	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	monitoring "google.golang.org/api/monitoring/v3"
 )
@@ -98,19 +97,22 @@ func (c *Client) Write(samples model.Samples) error {
 		GceConfig: gceConfig,
 	}
 	// TODO(jkohen): reuse the client, if it makes sense.
-	client := oauth2.NewClient(context.Background(), google.ComputeTokenSource(""))
+	client, err := google.DefaultClient(
+		context.Background(), monitoring.MonitoringReadScope)
+	if err != nil {
+		return err
+	}
 	stackdriverService, err := monitoring.New(client)
 	stackdriverService.BasePath = c.url
 	if err != nil {
 		return err
 	}
 
-	// TODO(jkohen) How to make the Stackdriver client respect the timeout?
-	// ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
-	// defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
 
 	ts := []*monitoring.TimeSeries{}
-	translator.SendToStackdriver(stackdriverService, commonConfig, ts)
+	translator.SendToStackdriver(ctx, stackdriverService, commonConfig, ts)
 	return nil
 }
 
