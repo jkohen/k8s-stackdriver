@@ -15,7 +15,9 @@ package stackdriver
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/GoogleCloudPlatform/k8s-stackdriver/prometheus-to-sd/config"
@@ -30,32 +32,27 @@ import (
 const (
 	// TODO(jkohen): Make prometheus.io the default prefix.
 	metricsPrefix = "custom.googleapis.com"
+	// Built-in Prometheus metric exporting process start time.
+	processStartTimeMetric = "process_start_time_seconds"
 )
 
 // Client allows sending batches of Prometheus samples to Stackdriver.
 type Client struct {
 	logger log.Logger
 
-	url     string
-	timeout time.Duration
+	url           string
+	timeout       time.Duration
+	metricsPrefix string
 }
 
 // NewClient creates a new Client.
 func NewClient(logger log.Logger, url string, timeout time.Duration) *Client {
 	return &Client{
-		logger:  logger,
-		url:     url,
-		timeout: timeout,
+		logger:        logger,
+		url:           url,
+		timeout:       timeout,
+		metricsPrefix: metricsPrefix,
 	}
-}
-
-// StoreSamplesRequest is used for building a JSON request for storing samples
-// via the Stackdriver.
-type StoreSamplesRequest struct {
-	Metric    string            `json:"metric"`
-	Timestamp int64             `json:"timestamp"`
-	Value     float64           `json:"value"`
-	Labels    map[string]string `json:"labels"`
 }
 
 // labelsFromMetric translates Prometheus metric into Stackdriver labels.
@@ -70,26 +67,120 @@ func labelsFromMetric(m model.Metric) map[string]string {
 	return labels
 }
 
-// Write sends a batch of samples to Stackdriver via its HTTP API.
-func (c *Client) Write(samples model.Samples) error {
-	reqs := make([]StoreSamplesRequest, 0, len(samples))
-	for _, s := range samples {
-		v := float64(s.Value)
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			level.Debug(c.logger).Log("msg", "cannot send value to Stackdriver, skipping sample", "value", v, "sample", s)
-			continue
+func getStartTime(samples model.Samples) (time.Time, error) {
+	// For cumulative metrics we need to know process start time.
+	for _, sample := range samples {
+		if sample.Metric[model.MetricNameLabel] == processStartTimeMetric {
+			startSeconds := math.Trunc(float64(sample.Value))
+			startNanos := 1000000000 * (float64(sample.Value) - startSeconds)
+			return time.Unix(int64(startSeconds), int64(startNanos)), nil
 		}
-		metric := string(s.Metric[model.MetricNameLabel])
-		reqs = append(reqs, StoreSamplesRequest{
-			Metric:    metric,
-			Timestamp: s.Timestamp.Unix(),
-			Value:     v,
-			Labels:    labelsFromMetric(s.Metric),
-		})
+	}
+	// If the process start time is not specified, assuming it's
+	// the unix 1 second, because Stackdriver can't handle
+	// unix zero or unix negative number.
+	return time.Unix(1, 0),
+		fmt.Errorf("Metric %s invalid or not defined. Cumulative will be inaccurate.",
+			processStartTimeMetric)
+}
+
+// translateToStackdriver translates metrics in Prometheus format to Stackdriver format.
+func (c *Client) translateToStackdriver(samples model.Samples) []*monitoring.TimeSeries {
+	startTime, err := getStartTime(samples)
+	if err != nil {
+		level.Error(c.logger).Log("err", err)
+		// Continue with the default startTime.
 	}
 
+	var ts []*monitoring.TimeSeries
+	for _, sample := range samples {
+		t, err := c.translateSample(sample, startTime)
+		if err != nil {
+			level.Warn(c.logger).Log(
+				"msg", "error while processing metric",
+				"metric", sample.Metric[model.MetricNameLabel],
+				"err", err)
+		} else {
+			ts = append(ts, t)
+		}
+	}
+	return ts
+}
+
+// getMetricType creates metric type name base on the metric prefix, and metric name.
+func getMetricType(metricsPrefix string, sample *model.Sample) string {
+	return fmt.Sprintf("%s/%s", metricsPrefix, sample.Metric[model.MetricNameLabel])
+}
+
+// Assumes that the sample type is Gauge, because Prometheus server doesn't pass the type.
+func extractMetricKind(sample *model.Sample) string {
+	return "GAUGE"
+}
+
+func getMonitoredResource(sample *model.Sample) (*monitoring.MonitoredResource, error) {
+	return &monitoring.MonitoredResource{
+		Labels: map[string]string{},
+		Type:   "gke_container",
+	}, nil
+}
+
+// getMetricLabels returns a Stackdriver label map from the sample.
+// By convention it excludes the following Prometheus labels:
+//  - model.MetricNameLabel
+//  - Any with "_" prefix.
+// TODO(jkohen): we probably need to exclude labels like "instance" and "job" too.
+func getMetricLabels(sample *model.Sample) map[string]string {
+	metricLabels := map[string]string{}
+	for label, value := range sample.Metric {
+		if label == model.MetricNameLabel || strings.HasPrefix(string(label), "_") {
+			continue
+		}
+		metricLabels[string(label)] = string(value)
+	}
+	return metricLabels
+}
+
+func (c *Client) translateSample(sample *model.Sample,
+	startTime time.Time) (*monitoring.TimeSeries, error) {
+
+	interval := &monitoring.TimeInterval{
+		EndTime: time.Now().UTC().Format(time.RFC3339),
+	}
+	metricKind := extractMetricKind(sample)
+	if metricKind == "CUMULATIVE" {
+		interval.StartTime = startTime.UTC().Format(time.RFC3339)
+	}
+	// Everything is a double in Prometheus. TODO(jkohen): if there is a
+	// Stackdriver MetricDescriptor for this metric, use its value.
+	valueType := "DOUBLE"
+	point := &monitoring.Point{
+		Interval: interval,
+		Value: &monitoring.TypedValue{
+			ForceSendFields: []string{},
+		},
+	}
+	translator.setValueBaseOnSimpleType(sample.Value, valueType, point)
+
+	monitoredResource, err := getMonitoredResource(sample)
+	if err != nil {
+		return &monitoring.TimeSeries{}, err
+	}
+	return &monitoring.TimeSeries{
+		Metric: &monitoring.Metric{
+			Labels: getMetricLabels(sample),
+			Type:   getMetricType(c.metricsPrefix, sample),
+		},
+		Resource:   monitoredResource,
+		MetricKind: metricKind,
+		ValueType:  valueType,
+		Points:     []*monitoring.Point{point},
+	}, nil
+}
+
+// Write sends a batch of samples to Stackdriver via its HTTP API.
+func (c *Client) Write(samples model.Samples) error {
 	// TODO(jkohen): Construct from the target labels, to avoid dependency on GCE.
-	gceConfig, err := config.GetGceConfig(metricsPrefix)
+	gceConfig, err := config.GetGceConfig(c.metricsPrefix)
 	if err != nil {
 		return err
 	}
@@ -111,7 +202,7 @@ func (c *Client) Write(samples model.Samples) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
-	ts := []*monitoring.TimeSeries{}
+	ts := c.translateToStackdriver(samples)
 	translator.SendToStackdriver(ctx, stackdriverService, commonConfig, ts)
 	return nil
 }
