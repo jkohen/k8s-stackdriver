@@ -14,25 +14,23 @@
 package stackdriver
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io/ioutil"
 	"math"
-	"net/http"
-	"net/url"
 	"time"
 
+	"github.com/GoogleCloudPlatform/k8s-stackdriver/prometheus-to-sd/config"
+	"github.com/GoogleCloudPlatform/k8s-stackdriver/prometheus-to-sd/translator"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/common/model"
-	"golang.org/x/net/context/ctxhttp"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	monitoring "google.golang.org/api/monitoring/v3"
 )
 
 const (
-	putEndpoint     = "/api/put"
-	contentTypeJSON = "application/json"
+	// TODO(jkohen): Make prometheus.io the default prefix.
+	metricsPrefix = "custom.googleapis.com"
 )
 
 // Client allows sending batches of Prometheus samples to Stackdriver.
@@ -91,45 +89,29 @@ func (c *Client) Write(samples model.Samples) error {
 		})
 	}
 
-	u, err := url.Parse(c.url)
+	// TODO(jkohen): Construct from the target labels, to avoid dependency on GCE.
+	gceConfig, err := config.GetGceConfig(metricsPrefix)
+	if err != nil {
+		return err
+	}
+	commonConfig := &config.CommonConfig{
+		GceConfig: gceConfig,
+	}
+	// TODO(jkohen): reuse the client, if it makes sense.
+	client := oauth2.NewClient(context.Background(), google.ComputeTokenSource(""))
+	stackdriverService, err := monitoring.New(client)
+	stackdriverService.BasePath = c.url
 	if err != nil {
 		return err
 	}
 
-	u.Path = putEndpoint
+	// TODO(jkohen) How to make the Stackdriver client respect the timeout?
+	// ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	// defer cancel()
 
-	buf, err := json.Marshal(reqs)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
-	defer cancel()
-
-	resp, err := ctxhttp.Post(ctx, http.DefaultClient, u.String(), contentTypeJSON, bytes.NewBuffer(buf))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	// API returns status code 204 for successful writes.
-	// http://opentsdb.net/docs/build/html/api_http/put.html
-	if resp.StatusCode == http.StatusNoContent {
-		return nil
-	}
-
-	// API returns status code 400 on error, encoding error details in the
-	// response content in JSON.
-	buf, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	var r map[string]int
-	if err := json.Unmarshal(buf, &r); err != nil {
-		return err
-	}
-	return fmt.Errorf("failed to write %d samples to Stackdriver, %d succeeded", r["failed"], r["success"])
+	ts := []*monitoring.TimeSeries{}
+	translator.SendToStackdriver(stackdriverService, commonConfig, ts)
+	return nil
 }
 
 // Name identifies the client as an Stackdriver client.
