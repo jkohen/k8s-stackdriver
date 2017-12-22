@@ -12,12 +12,11 @@ items:
   spec:
     selector:
       app: prometheus
-    type: NodePort
+    type: ClusterIP
     ports:
     - name: prometheus
       protocol: TCP
       port: 9090
-      nodePort: 30900
 - kind: Deployment
   apiVersion: extensions/v1beta1
   metadata:
