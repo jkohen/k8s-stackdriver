@@ -141,7 +141,7 @@ func getStartTime(samples model.Samples) (time.Time, error) {
 func (c *Client) translateToStackdriver(samples model.Samples) []*monitoring.TimeSeries {
 	startTime, err := getStartTime(samples)
 	if err != nil {
-		level.Error(c.logger).Log("err", err)
+		level.Error(c.logger).Log("sample_metric", samples[0], "err", err)
 		// Continue with the default startTime.
 	}
 
