@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/clock"
+
 	gce "cloud.google.com/go/compute/metadata"
 	"github.com/GoogleCloudPlatform/k8s-stackdriver/prometheus-to-sd/config"
 	"github.com/GoogleCloudPlatform/k8s-stackdriver/prometheus-to-sd/translator"
@@ -115,6 +117,7 @@ func (m *resourceMap) Translate(metric model.Metric) *monitoring.MonitoredResour
 // Client allows sending batches of Prometheus samples to Stackdriver.
 type Client struct {
 	logger log.Logger
+	clock  clock.Clock
 
 	url           string
 	timeout       time.Duration
@@ -125,6 +128,7 @@ type Client struct {
 func NewClient(logger log.Logger, url string, timeout time.Duration) *Client {
 	return &Client{
 		logger:        logger,
+		clock:         clock.Clock(clock.RealClock{}),
 		url:           url,
 		timeout:       timeout,
 		metricsPrefix: metricsPrefix,
@@ -240,12 +244,11 @@ func (c *Client) translateSample(sample *model.Sample,
 		return &monitoring.TimeSeries{},
 			fmt.Errorf("cannot send value=%v to Stackdriver, skipping sample=%v", value, sample)
 	}
-	interval := &monitoring.TimeInterval{
-		EndTime: time.Now().UTC().Format(time.RFC3339),
-	}
+	// TODO(jkohen): This should use the sample timestamp, if non-negative.
+	interval := &monitoring.TimeInterval{EndTime: formatTime(c.clock.Now())}
 	metricKind := extractMetricKind(sample)
 	if metricKind == "CUMULATIVE" {
-		interval.StartTime = startTime.UTC().Format(time.RFC3339)
+		interval.StartTime = formatTime(startTime)
 	}
 	// Everything is a double in Prometheus. TODO(jkohen): if there is a
 	// Stackdriver MetricDescriptor for this metric, use its value.
@@ -316,6 +319,10 @@ func (c *Client) Write(samples model.Samples) error {
 	ts := c.translateToStackdriver(samples)
 	translator.SendToStackdriver(ctx, stackdriverService, commonConfig, ts)
 	return nil
+}
+
+func formatTime(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
 }
 
 // Name identifies the client as an Stackdriver client.

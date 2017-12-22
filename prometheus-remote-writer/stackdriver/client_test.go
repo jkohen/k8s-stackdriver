@@ -17,12 +17,17 @@ limitations under the License.
 package stackdriver
 
 import (
+	"bytes"
 	"reflect"
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/clock"
+
 	monitoring "google.golang.org/api/monitoring/v3"
 
+	"github.com/davecgh/go-spew/spew"
+	"github.com/go-kit/kit/log"
 	"github.com/prometheus/common/model"
 )
 
@@ -100,7 +105,111 @@ func TestGetStartTime(t *testing.T) {
 	}
 }
 
+var testKubernetesLabels = model.LabelSet{
+	"_kubernetes_project_id_or_name": "a",
+	"_kubernetes_location":           "b",
+	"_kubernetes_cluster_name":       "c",
+	"_kubernetes_namespace":          "d",
+	"_kubernetes_pod_name":           "e",
+	"_kubernetes_pod_node_name":      "f",
+	"_kubernetes_pod_container_name": "g",
+}
+var testResourceLabels = map[string]string{
+	"project_id":     "a",
+	"zone":           "b",
+	"cluster_name":   "c",
+	"namespace_id":   "d",
+	"pod_id":         "e",
+	"instance_id":    "f",
+	"container_name": "g",
+}
+
+// TestTranslateToStackdriver ensures the translation works correctly at a high
+// level. Testing new fields here makes sense. For testing specific branches of
+// each translation method, extend the dedicated test methods below.
 func TestTranslateToStackdriver(t *testing.T) {
+	sampleTime := time.Unix(1234, 567)
+	output := &bytes.Buffer{}
+	c := NewClient(log.NewLogfmtLogger(output), "", time.Duration(0))
+	c.clock = clock.Clock(clock.NewFakeClock(sampleTime))
+
+	v1 := 1.0
+	v2 := 123.4
+	samples := model.Samples{
+		&model.Sample{
+			Metric: model.Metric(
+				testKubernetesLabels.Merge(
+					model.LabelSet{
+						model.MetricNameLabel: "metric1",
+						"l1": "v1",
+					})),
+			Value: model.SampleValue(v1),
+		},
+		&model.Sample{
+			Metric: model.Metric(
+				testKubernetesLabels.Merge(
+					model.LabelSet{
+						model.MetricNameLabel: "process_start_time_seconds",
+						"l2": "v2",
+					})),
+			Value: model.SampleValue(v2),
+		},
+	}
+	ts := c.translateToStackdriver(samples)
+	if ts == nil {
+		t.Fatalf("Failed with error %v", output.String())
+	}
+	expectedTS := []*monitoring.TimeSeries{
+		&monitoring.TimeSeries{
+			Metric: &monitoring.Metric{
+				Type:   "custom.googleapis.com/metric1",
+				Labels: map[string]string{"l1": "v1"},
+			},
+			Resource: &monitoring.MonitoredResource{
+				Type:   "gke_container",
+				Labels: testResourceLabels,
+			},
+			MetricKind: "GAUGE",
+			ValueType:  "DOUBLE",
+			Points: []*monitoring.Point{
+				{
+					Interval: &monitoring.TimeInterval{
+						EndTime: formatTime(sampleTime),
+					},
+					Value: &monitoring.TypedValue{
+						DoubleValue:     &v1,
+						ForceSendFields: []string{},
+					},
+					ForceSendFields: []string{"DoubleValue"},
+				}},
+		},
+		&monitoring.TimeSeries{
+			Metric: &monitoring.Metric{
+				Type:   "custom.googleapis.com/process_start_time_seconds",
+				Labels: map[string]string{"l2": "v2"},
+			},
+			Resource: &monitoring.MonitoredResource{
+				Type:   "gke_container",
+				Labels: testResourceLabels,
+			},
+			MetricKind: "GAUGE",
+			ValueType:  "DOUBLE",
+			Points: []*monitoring.Point{
+				{
+					Interval: &monitoring.TimeInterval{
+						EndTime: formatTime(sampleTime),
+					},
+					Value: &monitoring.TypedValue{
+						DoubleValue:     &v2,
+						ForceSendFields: []string{},
+					},
+					ForceSendFields: []string{"DoubleValue"},
+				}},
+		},
+	}
+	if !reflect.DeepEqual(expectedTS, ts) {
+		t.Errorf("Expected %v, actual %v", spew.Sdump(expectedTS), spew.Sdump(ts))
+	}
 }
 
 func TestTranslateSample(t *testing.T) {
