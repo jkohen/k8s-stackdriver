@@ -19,6 +19,7 @@ package stackdriver
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	monitoring "google.golang.org/api/monitoring/v3"
 
@@ -62,6 +63,41 @@ func TestResourceMapTranslate(t *testing.T) {
 }
 
 func TestGetStartTime(t *testing.T) {
+	{
+		missingStartTime := model.Samples{
+			&model.Sample{
+				Metric: model.Metric{
+					model.MetricNameLabel: "metric1",
+				},
+				Value: 1.0,
+			},
+		}
+		startTime, err := getStartTime(missingStartTime)
+		if err == nil {
+			t.Fail()
+		}
+		if !startTime.After(time.Unix(0, 0)) {
+			t.Errorf("Time must be positive: %v", startTime)
+		}
+	}
+	{
+		withStartTime := model.Samples{
+			&model.Sample{
+				Metric: model.Metric{
+					model.MetricNameLabel: "process_start_time_seconds",
+				},
+				Value: 123.4,
+			},
+		}
+		expectedTime := time.Unix(123, 400000000)
+		startTime, err := getStartTime(withStartTime)
+		if err != nil {
+			t.Error(err)
+		}
+		if startTime != expectedTime {
+			t.Errorf("Expected %v, actual %v", expectedTime, startTime)
+		}
+	}
 }
 
 func TestTranslateToStackdriver(t *testing.T) {
