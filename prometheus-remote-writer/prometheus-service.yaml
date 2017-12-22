@@ -218,5 +218,13 @@ items:
           target_label: _kubernetes_pod_container_name
       remote_write:
       - url: "http://prometheus-remote-writer:9201/write"
+        write_relabel_configs:
+        # These labels are redundant for Stackdriver.
+        - source_labels: [job]
+          target_label: job
+          replacement: ""
+        - source_labels: [instance]
+          target_label: instance
+          replacement: ""
   metadata:
     name: prometheus

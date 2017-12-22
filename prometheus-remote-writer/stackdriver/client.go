@@ -214,7 +214,6 @@ func getMonitoredResource(sample *model.Sample) *monitoring.MonitoredResource {
 // By convention it excludes the following Prometheus labels:
 //  - model.MetricNameLabel
 //  - Any with "_" prefix.
-// TODO(jkohen): we probably need to exclude labels like "instance" and "job" too.
 func getMetricLabels(sample *model.Sample) map[string]string {
 	metricLabels := map[string]string{}
 	for label, value := range sample.Metric {
