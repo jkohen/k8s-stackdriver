@@ -82,7 +82,7 @@ items:
         - name: prometheus-remote-writer
           image: gcr.io/prometheus-to-sd/remote-writer:latest
           ports:
-          - name: write
+          - name: web
             containerPort: 9201
 - kind: ConfigMap
   apiVersion: v1
