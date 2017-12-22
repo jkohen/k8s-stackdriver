@@ -189,11 +189,11 @@ func protoToSamples(req *prompb.WriteRequest) model.Samples {
 func sendSamples(logger log.Logger, w writer, samples model.Samples) {
 	begin := time.Now()
 	err := w.Write(samples)
-	duration := time.Since(begin).Seconds()
 	if err != nil {
 		level.Warn(logger).Log("msg", "Error sending samples to remote storage", "err", err, "storage", w.Name(), "num_samples", len(samples))
 		failedSamples.WithLabelValues(w.Name()).Add(float64(len(samples)))
 	}
 	sentSamples.WithLabelValues(w.Name()).Add(float64(len(samples)))
+	duration := time.Since(begin).Seconds()
 	sentBatchDuration.WithLabelValues(w.Name()).Observe(duration)
 }
