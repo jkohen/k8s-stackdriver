@@ -228,7 +228,7 @@ func getMetricLabels(sample *model.Sample) map[string]string {
 	return metricLabels
 }
 
-func setValueBaseOnSimpleType(value float64, valueType string, point *monitoring.Point) {
+func setValue(value float64, valueType string, point *monitoring.Point) {
 	if valueType == "INT64" {
 		val := int64(value)
 		point.Value.Int64Value = &val
@@ -268,7 +268,7 @@ func (c *Client) translateSample(sample *model.Sample,
 			ForceSendFields: []string{},
 		},
 	}
-	setValueBaseOnSimpleType(value, valueType, point)
+	setValue(value, valueType, point)
 
 	monitoredResource := getMonitoredResource(sample)
 	if monitoredResource == nil {
@@ -298,7 +298,11 @@ func (c *Client) Write(samples model.Samples) error {
 		return fmt.Errorf("error while getting project id: %v", err)
 	}
 
-	// TODO(jkohen): Construct from the target labels, to avoid dependency on GCE.
+	// TODO(jkohen): Construct from configuration, to avoid dependency on
+	// GCE.  See if we can get the project from the result of
+	// FindDefaultCredentials. We can use them instead of the call to
+	// DefaultClient below.
+	// https://godoc.org/golang.org/x/oauth2/google#FindDefaultCredentials
 	gceConfig := &config.GceConfig{
 		Project:       project,
 		MetricsPrefix: c.metricsPrefix,
