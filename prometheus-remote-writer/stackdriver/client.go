@@ -65,6 +65,26 @@ var resourceMappings = []ResourceMap{
 			"_kubernetes_pod_container_name": "container_name",
 		},
 	},
+	{
+		Type: "k8s_pod",
+		LabelMap: map[string]string{
+			"_kubernetes_project_id_or_name": "project",
+			"_kubernetes_location":           "location",
+			"_kubernetes_cluster_name":       "cluster_name",
+			"_kubernetes_namespace":          "namespace_name",
+			"_kubernetes_pod_name":           "pod_name",
+			"_kubernetes_pod_node_name":      "node_name",
+		},
+	},
+	{
+		Type: "k8s_node",
+		LabelMap: map[string]string{
+			"_kubernetes_project_id_or_name": "project",
+			"_kubernetes_location":           "location",
+			"_kubernetes_cluster_name":       "cluster_name",
+			"_kubernetes_node_name":          "node_name",
+		},
+	},
 }
 
 type ResourceMap struct {
@@ -157,6 +177,14 @@ func (c *Client) translateToStackdriver(samples model.Samples) []*monitoring.Tim
 				"metric", sample.Metric[model.MetricNameLabel],
 				"err", err)
 		} else {
+			// TODO(jkohen): Remove once the whitelist goes away, or
+			// at least make this controlled by a flag.
+			if t.Resource.Type != "gke_container" {
+				// The new k8s MonitoredResource types are still
+				// behind a whitelist. Drop silently for now to
+				// avoid errors in the logs.
+				continue
+			}
 			ts = append(ts, t)
 		}
 	}
