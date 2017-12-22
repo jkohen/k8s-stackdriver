@@ -31,42 +31,6 @@ import (
 	"github.com/prometheus/common/model"
 )
 
-func TestResourceMapTranslate(t *testing.T) {
-	r := resourceMap{
-		Type: "my_type",
-		LabelMap: map[string]string{
-			"kube1": "sd1",
-			"kube2": "sd2",
-		},
-	}
-	// This metric is missing label "kube1".
-	noMatchMetric := model.Metric{
-		"ignored": "a",
-		"kube2":   "b",
-	}
-	if resource := r.Translate(noMatchMetric); resource != nil {
-		t.Errorf("Expected no match, matched %v", *resource)
-	}
-	matchMetric := model.Metric{
-		"ignored": "a",
-		"kube2":   "b",
-		"kube1":   "c",
-	}
-
-	expectedResource := monitoring.MonitoredResource{
-		Type: "my_type",
-		Labels: map[string]string{
-			"sd1": "c",
-			"sd2": "b",
-		},
-	}
-	if resource := r.Translate(matchMetric); resource == nil {
-		t.Errorf("Expected %v, actual nil", expectedResource)
-	} else if !reflect.DeepEqual(*resource, expectedResource) {
-		t.Errorf("Expected %v, actual %v", expectedResource, *resource)
-	}
-}
-
 func TestGetStartTime(t *testing.T) {
 	{
 		missingStartTime := model.Samples{
