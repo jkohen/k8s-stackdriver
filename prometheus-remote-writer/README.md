@@ -11,3 +11,11 @@ You *must* edit the file and update the value of labels `_kubernetes_cluster_nam
 prometheus-remote-writer relies on [Google Application Default Credentials](https://developers.google.com/identity/protocols/application-default-credentials) to authenticate with the Stackdriver Monitoring API. These should be present out of the box on Google Container Engine, and can be configured manually in other environments.
 
 Other clouds that Prometheus support can be used. At the moment that requires manual customization of the label mappings and minor changes to the source code.
+
+# Release
+
+For building and releasing new Docker images I've been running the following at the `prometheus-remote-writer` directory. You can replace _prometheus-to-sd_ with your own project for private images:
+
+```
+go build -o remote-writer && gcloud container builds submit --tag gcr.io/prometheus-to-sd/remote-writer .
+```
