@@ -130,8 +130,8 @@ var testResourceLabels = map[string]string{
 func TestTranslateToStackdriver(t *testing.T) {
 	sampleTime := time.Unix(1234, 567)
 	output := &bytes.Buffer{}
-	c := NewClient(log.NewLogfmtLogger(output), "", time.Duration(0))
-	c.clock = clock.Clock(clock.NewFakeClock(sampleTime))
+	translator := NewTranslator(log.NewLogfmtLogger(output),
+		clock.Clock(clock.NewFakeClock(sampleTime)), "metrics.prefix")
 
 	v1 := 1.0
 	v2 := 123.4
@@ -155,14 +155,14 @@ func TestTranslateToStackdriver(t *testing.T) {
 			Value: model.SampleValue(v2),
 		},
 	}
-	ts := c.translateToStackdriver(samples)
+	ts := translator.translateToStackdriver(samples)
 	if ts == nil {
 		t.Fatalf("Failed with error %v", output.String())
 	}
 	expectedTS := []*monitoring.TimeSeries{
 		&monitoring.TimeSeries{
 			Metric: &monitoring.Metric{
-				Type:   "custom.googleapis.com/metric1",
+				Type:   "metrics.prefix/metric1",
 				Labels: map[string]string{"l1": "v1"},
 			},
 			Resource: &monitoring.MonitoredResource{
@@ -185,7 +185,7 @@ func TestTranslateToStackdriver(t *testing.T) {
 		},
 		&monitoring.TimeSeries{
 			Metric: &monitoring.Metric{
-				Type:   "custom.googleapis.com/process_start_time_seconds",
+				Type:   "metrics.prefix/process_start_time_seconds",
 				Labels: map[string]string{"l2": "v2"},
 			},
 			Resource: &monitoring.MonitoredResource{
