@@ -131,18 +131,6 @@ func NewClient(logger log.Logger, url string, timeout time.Duration) *Client {
 	}
 }
 
-// labelsFromMetric translates Prometheus metric into Stackdriver labels.
-func labelsFromMetric(m model.Metric) map[string]string {
-	labels := make(map[string]string, len(m)-1)
-	for l, v := range m {
-		if l == model.MetricNameLabel {
-			continue
-		}
-		labels[string(l)] = string(v)
-	}
-	return labels
-}
-
 func getStartTime(samples model.Samples) (time.Time, error) {
 	// For cumulative metrics we need to know process start time.
 	for _, sample := range samples {

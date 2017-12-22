@@ -34,34 +34,31 @@ func TestResourceMapTranslate(t *testing.T) {
 		},
 	}
 	// This metric is missing label "kube1".
-	no_match_metric := model.Metric{
+	noMatchMetric := model.Metric{
 		"ignored": "a",
 		"kube2":   "b",
 	}
-	if resource := r.Translate(no_match_metric); resource != nil {
+	if resource := r.Translate(noMatchMetric); resource != nil {
 		t.Errorf("Expected no match, matched %v", *resource)
 	}
-	match_metric := model.Metric{
+	matchMetric := model.Metric{
 		"ignored": "a",
 		"kube2":   "b",
 		"kube1":   "c",
 	}
 
-	expected_resource := monitoring.MonitoredResource{
+	expectedResource := monitoring.MonitoredResource{
 		Type: "my_type",
 		Labels: map[string]string{
 			"sd1": "c",
 			"sd2": "b",
 		},
 	}
-	if resource := r.Translate(match_metric); resource == nil {
-		t.Errorf("Expected %v, actual nil", expected_resource)
-	} else if !reflect.DeepEqual(*resource, expected_resource) {
-		t.Errorf("Expected %v, actual %v", expected_resource, *resource)
+	if resource := r.Translate(matchMetric); resource == nil {
+		t.Errorf("Expected %v, actual nil", expectedResource)
+	} else if !reflect.DeepEqual(*resource, expectedResource) {
+		t.Errorf("Expected %v, actual %v", expectedResource, *resource)
 	}
-}
-
-func TestLabelsFromMetric(t *testing.T) {
 }
 
 func TestGetStartTime(t *testing.T) {
