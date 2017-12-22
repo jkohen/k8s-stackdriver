@@ -67,7 +67,7 @@ items:
   metadata:
     name: prometheus-remote-writer
   spec:
-    replicas: 1
+    replicas: 2
     selector:
       matchLabels:
         app: prometheus-remote-writer
@@ -89,7 +89,6 @@ items:
     prometheus.yaml: |
       # Source: https://github.com/prometheus/prometheus/blob/master/documentation/examples/prometheus-kubernetes.yml
       global:
-        # Use <write_relabel_configs> instead, since this is specific to Stackdriver?
         external_labels:
           _kubernetes_cluster_name: 'prom-test-cluster-1'
           _kubernetes_location: 'us-central1-a'
