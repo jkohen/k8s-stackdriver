@@ -15,11 +15,13 @@ package stackdriver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
+	gce "cloud.google.com/go/compute/metadata"
 	"github.com/GoogleCloudPlatform/k8s-stackdriver/prometheus-to-sd/config"
 	"github.com/GoogleCloudPlatform/k8s-stackdriver/prometheus-to-sd/translator"
 	"github.com/go-kit/kit/log"
@@ -35,6 +37,57 @@ const (
 	// Built-in Prometheus metric exporting process start time.
 	processStartTimeMetric = "process_start_time_seconds"
 )
+
+// TODO(jkohen): ensure these are sorted from more specific to less specific.
+var resourceMappings = []ResourceMap{
+	{
+		// This is just for testing, until the Kubernetes resource types are public.
+		Type: "gke_container",
+		LabelMap: map[string]string{
+			"_kubernetes_project_id_or_name": "project_id",
+			"_kubernetes_location":           "zone",
+			"_kubernetes_cluster_name":       "cluster_name",
+			"_kubernetes_namespace":          "namespace_id",
+			"_kubernetes_pod_name":           "pod_id",
+			"_kubernetes_pod_node_name":      "instance_id",
+			"_kubernetes_pod_container_name": "container_name",
+		},
+	},
+	{
+		Type: "k8s_container",
+		LabelMap: map[string]string{
+			"_kubernetes_project_id_or_name": "project",
+			"_kubernetes_location":           "location",
+			"_kubernetes_cluster_name":       "cluster_name",
+			"_kubernetes_namespace":          "namespace_name",
+			"_kubernetes_pod_name":           "pod_name",
+			"_kubernetes_pod_node_name":      "node_name",
+			"_kubernetes_pod_container_name": "container_name",
+		},
+	},
+}
+
+type ResourceMap struct {
+	// The name of the Stackdriver MonitoredResource.
+	Type string
+	// Mapping from Prometheus to Stackdriver labels
+	LabelMap map[string]string
+}
+
+func (m *ResourceMap) Translate(metric model.Metric) *monitoring.MonitoredResource {
+	result := monitoring.MonitoredResource{
+		Type:   m.Type,
+		Labels: map[string]string{},
+	}
+	for prometheusName, stackdriverName := range m.LabelMap {
+		if value, ok := metric[model.LabelName(prometheusName)]; ok {
+			result.Labels[string(stackdriverName)] = string(value)
+		} else {
+			return nil
+		}
+	}
+	return &result
+}
 
 // Client allows sending batches of Prometheus samples to Stackdriver.
 type Client struct {
@@ -92,6 +145,9 @@ func (c *Client) translateToStackdriver(samples model.Samples) []*monitoring.Tim
 		// Continue with the default startTime.
 	}
 
+	// TODO(jkohen): See if it's possible for Prometheus to pass two points
+	// for the same time series, which isn't accepted by the Stackdriver
+	// Monitoring API.
 	var ts []*monitoring.TimeSeries
 	for _, sample := range samples {
 		t, err := c.translateSample(sample, startTime)
@@ -117,11 +173,13 @@ func extractMetricKind(sample *model.Sample) string {
 	return "GAUGE"
 }
 
-func getMonitoredResource(sample *model.Sample) (*monitoring.MonitoredResource, error) {
-	return &monitoring.MonitoredResource{
-		Labels: map[string]string{},
-		Type:   "gke_container",
-	}, nil
+func getMonitoredResource(sample *model.Sample) *monitoring.MonitoredResource {
+	for _, mapping := range resourceMappings {
+		if resource := mapping.Translate(sample.Metric); resource != nil {
+			return resource
+		}
+	}
+	return nil
 }
 
 // getMetricLabels returns a Stackdriver label map from the sample.
@@ -138,6 +196,22 @@ func getMetricLabels(sample *model.Sample) map[string]string {
 		metricLabels[string(label)] = string(value)
 	}
 	return metricLabels
+}
+
+func setValueBaseOnSimpleType(value float64, valueType string, point *monitoring.Point) {
+	if valueType == "INT64" {
+		val := int64(value)
+		point.Value.Int64Value = &val
+		point.ForceSendFields = append(point.ForceSendFields, "Int64Value")
+	} else if valueType == "DOUBLE" {
+		point.Value.DoubleValue = &value
+		point.ForceSendFields = append(point.ForceSendFields, "DoubleValue")
+	} else if valueType == "BOOL" {
+		const falseValueEpsilon = 0.001
+		var val = math.Abs(value) > falseValueEpsilon
+		point.Value.BoolValue = &val
+		point.ForceSendFields = append(point.ForceSendFields, "BoolValue")
+	}
 }
 
 func (c *Client) translateSample(sample *model.Sample,
@@ -159,11 +233,12 @@ func (c *Client) translateSample(sample *model.Sample,
 			ForceSendFields: []string{},
 		},
 	}
-	translator.setValueBaseOnSimpleType(sample.Value, valueType, point)
+	setValueBaseOnSimpleType(float64(sample.Value), valueType, point)
 
-	monitoredResource, err := getMonitoredResource(sample)
-	if err != nil {
-		return &monitoring.TimeSeries{}, err
+	monitoredResource := getMonitoredResource(sample)
+	if monitoredResource == nil {
+		return &monitoring.TimeSeries{},
+			fmt.Errorf("Cannot find MonitoredResource for %v", sample)
 	}
 	return &monitoring.TimeSeries{
 		Metric: &monitoring.Metric{
@@ -179,17 +254,26 @@ func (c *Client) translateSample(sample *model.Sample,
 
 // Write sends a batch of samples to Stackdriver via its HTTP API.
 func (c *Client) Write(samples model.Samples) error {
-	// TODO(jkohen): Construct from the target labels, to avoid dependency on GCE.
-	gceConfig, err := config.GetGceConfig(c.metricsPrefix)
+	if !gce.OnGCE() {
+		return errors.New("Not running on GCE.")
+	}
+
+	project, err := gce.ProjectID()
 	if err != nil {
-		return err
+		return fmt.Errorf("error while getting project id: %v", err)
+	}
+
+	// TODO(jkohen): Construct from the target labels, to avoid dependency on GCE.
+	gceConfig := &config.GceConfig{
+		Project:       project,
+		MetricsPrefix: c.metricsPrefix,
 	}
 	commonConfig := &config.CommonConfig{
 		GceConfig: gceConfig,
 	}
 	// TODO(jkohen): reuse the client, if it makes sense.
 	client, err := google.DefaultClient(
-		context.Background(), monitoring.MonitoringReadScope)
+		context.Background(), monitoring.MonitoringWriteScope)
 	if err != nil {
 		return err
 	}
