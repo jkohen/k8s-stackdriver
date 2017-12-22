@@ -20,3 +20,4 @@ RUN clean-install ca-certificates
 USER 65534:65534
 COPY remote-writer /
 ENTRYPOINT ["./remote-writer"]
+CMD ["--stackdriver-url=https://monitoring.googleapis.com/"]
