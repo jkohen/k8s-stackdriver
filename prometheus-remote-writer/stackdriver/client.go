@@ -42,7 +42,7 @@ const (
 )
 
 // TODO(jkohen): ensure these are sorted from more specific to less specific.
-var resourceMappings = []ResourceMap{
+var resourceMappings = []resourceMap{
 	{
 		// This is just for testing, until the Kubernetes resource types are public.
 		Type: "gke_container",
@@ -90,14 +90,14 @@ var resourceMappings = []ResourceMap{
 	},
 }
 
-type ResourceMap struct {
+type resourceMap struct {
 	// The name of the Stackdriver MonitoredResource.
 	Type string
 	// Mapping from Prometheus to Stackdriver labels
 	LabelMap map[string]string
 }
 
-func (m *ResourceMap) Translate(metric model.Metric) *monitoring.MonitoredResource {
+func (m *resourceMap) Translate(metric model.Metric) *monitoring.MonitoredResource {
 	result := monitoring.MonitoredResource{
 		Type:   m.Type,
 		Labels: map[string]string{},
@@ -144,7 +144,7 @@ func getStartTime(samples model.Samples) (time.Time, error) {
 	// the unix 1 second, because Stackdriver can't handle
 	// unix zero or unix negative number.
 	return time.Unix(1, 0),
-		fmt.Errorf("Metric %s invalid or not defined. Cumulative will be inaccurate.",
+		fmt.Errorf("metric %s invalid or not defined, cumulative will be inaccurate",
 			processStartTimeMetric)
 }
 
@@ -278,7 +278,7 @@ func (c *Client) translateSample(sample *model.Sample,
 // Write sends a batch of samples to Stackdriver via its HTTP API.
 func (c *Client) Write(samples model.Samples) error {
 	if !gce.OnGCE() {
-		return errors.New("Not running on GCE.")
+		return errors.New("not running on GCE")
 	}
 
 	project, err := gce.ProjectID()

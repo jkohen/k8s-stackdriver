@@ -26,7 +26,7 @@ import (
 )
 
 func TestResourceMapTranslate(t *testing.T) {
-	r := ResourceMap{
+	r := resourceMap{
 		Type: "my_type",
 		LabelMap: map[string]string{
 			"kube1": "sd1",
