@@ -217,6 +217,11 @@ func setValueBaseOnSimpleType(value float64, valueType string, point *monitoring
 func (c *Client) translateSample(sample *model.Sample,
 	startTime time.Time) (*monitoring.TimeSeries, error) {
 
+	value := float64(sample.Value)
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return &monitoring.TimeSeries{},
+			fmt.Errorf("cannot send value=%v to Stackdriver, skipping sample=%v", value, sample)
+	}
 	interval := &monitoring.TimeInterval{
 		EndTime: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -233,7 +238,7 @@ func (c *Client) translateSample(sample *model.Sample,
 			ForceSendFields: []string{},
 		},
 	}
-	setValueBaseOnSimpleType(float64(sample.Value), valueType, point)
+	setValueBaseOnSimpleType(value, valueType, point)
 
 	monitoredResource := getMonitoredResource(sample)
 	if monitoredResource == nil {
